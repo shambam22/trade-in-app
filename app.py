@@ -3,7 +3,7 @@ from flask import Flask, render_template, request
 
 app = Flask(__name__)
 
-API_KEY = 'your_pricecharting_api_key_here'  # Replace with your real key
+API_KEY = 'b41074978a21823114f1742ea664fe1ec9a77871'  # Your actual PriceCharting API key
 
 def get_supported_platforms():
     url = f'https://www.pricecharting.com/api/platforms?t={API_KEY}'
@@ -17,6 +17,7 @@ def get_price_data(game_title, platform_filter=None):
     url = f'https://www.pricecharting.com/api/products?t={API_KEY}&q={game_title}'
     response = requests.get(url)
     data = response.json()
+
     if data and isinstance(data, list):
         for item in data:
             if platform_filter and platform_filter.lower() in item['console_name'].lower():

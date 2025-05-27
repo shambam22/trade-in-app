@@ -1,75 +1,57 @@
+from flask import Flask, request, jsonify
 import requests
-from flask import Flask, render_template, request
 
 app = Flask(__name__)
 
-API_KEY = 'b41074978a21823114f1742ea664fe1ec9a77871'  # Your actual PriceCharting API key
+PRICECHARTING_API_KEY = 'b41074978a21823114f1742ea664fe1ec9a77871'
 
-def get_supported_platforms():
-    url = f'https://www.pricecharting.com/api/platforms?t={API_KEY}'
-    response = requests.get(url)
+def calculate_trade_value(market_price):
+    if market_price < 10.01:
+        return 0.50, 1.00
+    elif market_price <= 30.00:
+        return round(market_price * 0.20, 2), round(market_price * 0.40, 2)
+    elif market_price <= 50.00:
+        return round(market_price * 0.25, 2), round(market_price * 0.50, 2)
+    elif market_price <= 100.00:
+        return round(market_price * 0.30, 2), round(market_price * 0.60, 2)
+    elif market_price <= 100000.00:
+        return round(market_price * 0.35, 2), round(market_price * 0.70, 2)
+    return 0.00, 0.00
+
+@app.route('/get_trade_value', methods=['GET'])
+def get_trade_value():
+    upc = request.args.get('upc')
+    if not upc:
+        return jsonify({'error': 'UPC is required'}), 400
+
+    pc_url = f'https://www.pricecharting.com/api/product?t={PRICECHARTING_API_KEY}&upc={upc}'
+    response = requests.get(pc_url)
+
+    if response.status_code != 200:
+        return jsonify({'error': 'Failed to fetch from PriceCharting'}), 500
+
     data = response.json()
-    if isinstance(data, list):
-        return {platform['name']: platform['slug'] for platform in data}
-    return {}
+    product = data['product']
 
-def get_price_data(game_title, platform_filter=None):
-    url = f'https://www.pricecharting.com/api/products?t={API_KEY}&q={game_title}'
-    response = requests.get(url)
-    data = response.json()
+    loose_price = float(product.get('loose-price', 0))
+    cib_price = float(product.get('complete-price', 0))
+    new_price = float(product.get('new-price', 0))
 
-    if data and isinstance(data, list):
-        for item in data:
-            if platform_filter and platform_filter.lower() in item['console_name'].lower():
-                return {
-                    'title': item['product_name'],
-                    'loose_price': float(item['loose_price']),
-                    'cib_price': float(item['complete_price']),
-                    'new_price': float(item['new_price']),
-                    'image_url': item.get('box_art_url', '')
-                }
-        item = data[0]
-        return {
-            'title': item['product_name'],
-            'loose_price': float(item['loose_price']),
-            'cib_price': float(item['complete_price']),
-            'new_price': float(item['new_price']),
-            'image_url': item.get('box_art_url', '')
+    trade_in_loose_cash, trade_in_loose_credit = calculate_trade_value(loose_price)
+    trade_in_cib_cash, trade_in_cib_credit = calculate_trade_value(cib_price)
+    trade_in_new_cash, trade_in_new_credit = calculate_trade_value(new_price)
+
+    return jsonify({
+        'title': product['product-name'],
+        'platform': product['console-name'],
+        'pricecharting': {
+            'loose': loose_price,
+            'cib': cib_price,
+            'new': new_price
+        },
+        'trade_in': {
+            'loose': {'cash': trade_in_loose_cash, 'credit': trade_in_loose_credit},
+            'cib': {'cash': trade_in_cib_cash, 'credit': trade_in_cib_credit},
+            'new': {'cash': trade_in_new_cash, 'credit': trade_in_new_credit}
         }
-    return None
-
-def calculate_trade_in(price, offer_type):
-    if price <= 10:
-        return 0.50 if offer_type == 'cash' else 1.00
-    elif price <= 30:
-        return round(price * 0.20, 2) if offer_type == 'cash' else round(price * 0.40, 2)
-    elif price <= 50:
-        return round(price * 0.25, 2) if offer_type == 'cash' else round(price * 0.50, 2)
-    elif price <= 100:
-        return round(price * 0.30, 2) if offer_type == 'cash' else round(price * 0.60, 2)
-    else:
-        return round(price * 0.35, 2) if offer_type == 'cash' else round(price * 0.70, 2)
-
-@app.route('/', methods=['GET', 'POST'])
-def index():
-    trade_data = None
-    platforms = get_supported_platforms()
-    if request.method == 'POST':
-        game = request.form['game']
-        platform = request.form.get('platform', '')
-        data = get_price_data(game, platform)
-        if data:
-            trade_data = {
-                'title': data['title'],
-                'image_url': data['image_url'],
-                'loose_credit': calculate_trade_in(data['loose_price'], 'credit'),
-                'loose_cash': calculate_trade_in(data['loose_price'], 'cash'),
-                'cib_credit': calculate_trade_in(data['cib_price'], 'credit'),
-                'cib_cash': calculate_trade_in(data['cib_price'], 'cash'),
-                'new_credit': calculate_trade_in(data['new_price'], 'credit'),
-                'new_cash': calculate_trade_in(data['new_price'], 'cash'),
-            }
-    return render_template('index.html', trade_data=trade_data, platforms=platforms)
-
-if __name__ == '__main__':
-    app.run()
+    })

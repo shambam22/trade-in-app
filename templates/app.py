@@ -1,65 +1,57 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Game Trade-In Calculator</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-</head>
-<body class="bg-light text-dark">
-    <div class="container py-5">
-        <h1 class="mb-4 text-center">Game Trade-In Calculator</h1>
+from flask import Flask, request, jsonify
+import requests
 
-        <form method="POST" class="mb-4">
-            <div class="mb-3">
-                <label for="game" class="form-label">Enter Game Title</label>
-                <input type="text" id="game" name="game" class="form-control" required placeholder="e.g., The Legend of Zelda">
-            </div>
+app = Flask(__name__)
 
-            <button type="submit" class="btn btn-primary">Check Value</button>
-        </form>
+PRICECHARTING_API_KEY = 'b41074978a21823114f1742ea664fe1ec9a77871'
 
-        {% if trade_data %}
-            <div class="card">
-                <div class="card-header text-center">
-                    <h3 class="card-title">{{ trade_data.title }}</h3>
-                </div>
-                <div class="card-body">
-                    {% if trade_data.image_url %}
-                        <div class="text-center mb-4">
-                            <img src="{{ trade_data.image_url }}" alt="{{ trade_data.title }}" class="img-fluid" style="max-height: 200px;">
-                        </div>
-                    {% endif %}
-                    <table class="table table-bordered table-striped">
-                        <thead class="table-secondary">
-                            <tr>
-                                <th>Condition</th>
-                                <th>Trade-In Credit</th>
-                                <th>Cash Offer</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td>Loose</td>
-                                <td>${{ trade_data.loose_credit }}</td>
-                                <td>${{ trade_data.loose_cash }}</td>
-                            </tr>
-                            <tr>
-                                <td>Complete (CIB)</td>
-                                <td>${{ trade_data.cib_credit }}</td>
-                                <td>${{ trade_data.cib_cash }}</td>
-                            </tr>
-                            <tr>
-                                <td>New</td>
-                                <td>${{ trade_data.new_credit }}</td>
-                                <td>${{ trade_data.new_cash }}</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        {% elif request.method == 'POST' %}
-            <div class="alert alert-warning mt-4">Game not found or API issue. Please check your entry.</div>
-        {% endif %}
-    </div>
-</body>
-</html>
+def calculate_trade_value(market_price):
+    if market_price < 10.01:
+        return 0.50, 1.00
+    elif market_price <= 30.00:
+        return round(market_price * 0.20, 2), round(market_price * 0.40, 2)
+    elif market_price <= 50.00:
+        return round(market_price * 0.25, 2), round(market_price * 0.50, 2)
+    elif market_price <= 100.00:
+        return round(market_price * 0.30, 2), round(market_price * 0.60, 2)
+    elif market_price <= 100000.00:
+        return round(market_price * 0.35, 2), round(market_price * 0.70, 2)
+    return 0.00, 0.00
+
+@app.route('/get_trade_value', methods=['GET'])
+def get_trade_value():
+    upc = request.args.get('upc')
+    if not upc:
+        return jsonify({'error': 'UPC is required'}), 400
+
+    pc_url = f'https://www.pricecharting.com/api/product?t={PRICECHARTING_API_KEY}&upc={upc}'
+    response = requests.get(pc_url)
+
+    if response.status_code != 200:
+        return jsonify({'error': 'Failed to fetch from PriceCharting'}), 500
+
+    data = response.json()
+    product = data['product']
+
+    loose_price = float(product.get('loose-price', 0))
+    cib_price = float(product.get('complete-price', 0))
+    new_price = float(product.get('new-price', 0))
+
+    trade_in_loose_cash, trade_in_loose_credit = calculate_trade_value(loose_price)
+    trade_in_cib_cash, trade_in_cib_credit = calculate_trade_value(cib_price)
+    trade_in_new_cash, trade_in_new_credit = calculate_trade_value(new_price)
+
+    return jsonify({
+        'title': product['product-name'],
+        'platform': product['console-name'],
+        'pricecharting': {
+            'loose': loose_price,
+            'cib': cib_price,
+            'new': new_price
+        },
+        'trade_in': {
+            'loose': {'cash': trade_in_loose_cash, 'credit': trade_in_loose_credit},
+            'cib': {'cash': trade_in_cib_cash, 'credit': trade_in_cib_credit},
+            'new': {'cash': trade_in_new_cash, 'credit': trade_in_new_credit}
+        }
+    })

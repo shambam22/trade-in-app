@@ -3,55 +3,62 @@ import requests
 
 app = Flask(__name__)
 
-PRICECHARTING_API_KEY = 'b41074978a21823114f1742ea664fe1ec9a77871'
+PRICECHARTING_API_KEY = "b41074978a21823114f1742ea664fe1ec9a77871"
 
-def calculate_trade_value(price):
-    if price < 10.01:
+def calculate_offers(loose_value):
+    if loose_value < 10:
         return 0.50, 1.00
-    elif price <= 30.00:
-        return round(price * 0.20, 2), round(price * 0.40, 2)
-    elif price <= 50.00:
-        return round(price * 0.25, 2), round(price * 0.50, 2)
-    elif price <= 100.00:
-        return round(price * 0.30, 2), round(price * 0.60, 2)
-    elif price <= 100000.00:
-        return round(price * 0.35, 2), round(price * 0.70, 2)
-    return 0.00, 0.00
+    elif loose_value <= 30:
+        return loose_value * 0.20, loose_value * 0.40
+    elif loose_value <= 50:
+        return loose_value * 0.25, loose_value * 0.50
+    elif loose_value <= 100:
+        return loose_value * 0.30, loose_value * 0.60
+    else:
+        return loose_value * 0.35, loose_value * 0.70
 
-@app.route('/get_trade_value', methods=['GET'])
-def get_trade_value():
-    upc = request.args.get('upc')
-    if not upc:
-        return jsonify({'error': 'UPC is required'}), 400
+def get_product_data_by_upc(upc):
+    response = requests.get(f"https://www.pricecharting.com/api/product?upc={upc}&token={PRICECHARTING_API_KEY}")
+    return response.json()
 
-    api_url = f'https://www.pricecharting.com/api/product?t={PRICECHARTING_API_KEY}&upc={upc}'
-    response = requests.get(api_url)
+def get_product_data_by_name(name, console=None):
+    query = name
+    if console:
+        query += f" {console}"
+    response = requests.get(f"https://www.pricecharting.com/api/products?t={query}&token={PRICECHARTING_API_KEY}")
+    results = response.json().get("products", [])
+    if results:
+        return results[0]  # Assume first result is best match
+    return None
 
-    if response.status_code != 200:
-        return jsonify({'error': 'Failed to fetch from PriceCharting'}), 500
+def get_product_data_by_id(product_id):
+    response = requests.get(f"https://www.pricecharting.com/api/product?id={product_id}&token={PRICECHARTING_API_KEY}")
+    return response.json()
 
-    data = response.json()
-    product = data['product']
+@app.route("/", methods=["POST"])
+def trade_in_lookup():
+    data = request.get_json()
+    product = None
 
-    loose = float(product.get('loose-price', 0))
-    cib = float(product.get('complete-price', 0))
-    new = float(product.get('new-price', 0))
+    if "product_id" in data:
+        product = get_product_data_by_id(data["product_id"])
+    elif "upc" in data:
+        product = get_product_data_by_upc(data["upc"])
+    elif "name" in data:
+        product = get_product_data_by_name(data["name"], data.get("console"))
 
-    loose_cash, loose_credit = calculate_trade_value(loose)
-    cib_cash, cib_credit = calculate_trade_value(cib)
-    new_cash, new_credit = calculate_trade_value(new)
+    if not product or "product" not in product:
+        return jsonify({"error": "Product not found"}), 404
+
+    loose_value = float(product["product"]["loose-price"]) if isinstance(product["product"]["loose-price"], str) else product["product"]["loose-price"]
+    cash, trade = calculate_offers(loose_value)
 
     return jsonify({
-        'title': product['product-name'],
-        'platform': product['console-name'],
-        'pricecharting': {
-            'loose': loose,
-            'cib': cib,
-            'new': new
-        },
-        'trade_in': {
-            'loose': {'cash': loose_cash, 'credit': loose_credit},
-            'cib': {'cash': cib_cash, 'credit': cib_credit},
-            'new': {'cash': new_cash, 'credit': new_credit}
-        }
+        "name": product["product"]["product-name"],
+        "loose_value": loose_value,
+        "cash": round(cash, 2),
+        "trade": round(trade, 2)
     })
+
+if __name__ == "__main__":
+    app.run(debug=True)

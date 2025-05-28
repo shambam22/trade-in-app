@@ -3,61 +3,46 @@ import requests
 
 app = Flask(__name__)
 
-PRICECHARTING_API_KEY = "b41074978a21823114f1742ea664fe1ec9a77871"
+API_KEY = "b41074978a21823114f1742ea664fe1ec9a77871"
+API_URL = "https://www.pricecharting.com/api/products"
 
-def calculate_offers(loose_value):
-    if loose_value < 10:
+def calculate_trade_value(price):
+    if price <= 10:
         return 0.50, 1.00
-    elif loose_value <= 30:
-        return loose_value * 0.20, loose_value * 0.40
-    elif loose_value <= 50:
-        return loose_value * 0.25, loose_value * 0.50
-    elif loose_value <= 100:
-        return loose_value * 0.30, loose_value * 0.60
+    elif price <= 30:
+        return round(price * 0.20, 2), round(price * 0.40, 2)
+    elif price <= 50:
+        return round(price * 0.25, 2), round(price * 0.50, 2)
+    elif price <= 100:
+        return round(price * 0.30, 2), round(price * 0.60, 2)
     else:
-        return loose_value * 0.35, loose_value * 0.70
+        return round(price * 0.35, 2), round(price * 0.70, 2)
 
-def get_product_data_by_upc(upc):
-    response = requests.get(f"https://www.pricecharting.com/api/product?upc={upc}&token={PRICECHARTING_API_KEY}")
-    return response.json()
+@app.route("/tradein", methods=["GET"])
+def get_tradein_value():
+    query = request.args.get("query")
+    if not query:
+        return jsonify({"error": "Missing 'query' parameter"}), 400
 
-def get_product_data_by_name(name, console=None):
-    query = name
-    if console:
-        query += f" {console}"
-    response = requests.get(f"https://www.pricecharting.com/api/products?t={query}&token={PRICECHARTING_API_KEY}")
-    results = response.json().get("products", [])
-    if results:
-        return results[0]  # Assume first result is best match
-    return None
+    response = requests.get(API_URL, params={"t": API_KEY, "product-name": query})
+    data = response.json()
 
-def get_product_data_by_id(product_id):
-    response = requests.get(f"https://www.pricecharting.com/api/product?id={product_id}&token={PRICECHARTING_API_KEY}")
-    return response.json()
+    if "products" not in data or not data["products"]:
+        return jsonify({"error": "No products found"}), 404
 
-@app.route("/", methods=["POST"])
-def trade_in_lookup():
-    data = request.get_json()
-    product = None
+    product = data["products"][0]
+    title = product.get("product-name")
+    console = product.get("console-name")
+    price = float(product.get("loose-price", 0.0))
 
-    if "product_id" in data:
-        product = get_product_data_by_id(data["product_id"])
-    elif "upc" in data:
-        product = get_product_data_by_upc(data["upc"])
-    elif "name" in data:
-        product = get_product_data_by_name(data["name"], data.get("console"))
-
-    if not product or "product" not in product:
-        return jsonify({"error": "Product not found"}), 404
-
-    loose_value = float(product["product"]["loose-price"]) if isinstance(product["product"]["loose-price"], str) else product["product"]["loose-price"]
-    cash, trade = calculate_offers(loose_value)
+    cash, credit = calculate_trade_value(price)
 
     return jsonify({
-        "name": product["product"]["product-name"],
-        "loose_value": loose_value,
-        "cash": round(cash, 2),
-        "trade": round(trade, 2)
+        "title": title,
+        "console": console,
+        "loose_price": price,
+        "cash_value": cash,
+        "store_credit": credit,
     })
 
 if __name__ == "__main__":
